@@ -1,0 +1,728 @@
+=begin
+----------------------------------------------------------------------------
+--------------------------------- INFO -------------------------------------
+----------------------------------------------------------------------------
+Criador: Akaiger, créditos: Equipe RMVX ACE
+Nome: Athos' Items With Data (Core)
+Função: Fazer com que os itens do jogo sejam capazes de possuir atributos
+individuais e alteráveis
+----------------------------------------------------------------------------
+=end
+
+module AEA_IWD
+  def self.item_with_data?(item)
+    defined?(item.index) and item.index != nil
+  end
+end
+
+module DataManager
+  class << self
+    alias aeaiwd_create_game_objects create_game_objects
+    def create_game_objects
+      aeaiwd_create_game_objects
+      $game_items = Game_Items.new
+    end
+    
+    alias aeaiwd_make_save_contents make_save_contents
+    def make_save_contents
+      $game_items.garbage_collect
+      contents = aeaiwd_make_save_contents
+      contents[:items] = $game_items
+      return contents
+    end
+    
+    alias aeaiwd_extract_save_contents extract_save_contents
+    def extract_save_contents(contents)
+      aeaiwd_extract_save_contents(contents)
+      $game_items = contents[:items]
+    end
+  end
+end
+
+class Game_Items
+  attr_reader :weapons
+  attr_reader :armors
+  attr_reader :items
+  
+  def initialize
+    @weapons = []
+    @armors = []
+    @items = []
+  end
+  
+  def garbage_collect #deletes unused items
+    @weapons.select { |x| x != nil and x.index != nil }.each_with_index do |item|
+      item.delete if !$game_party.has_item?(item) and !$game_party.members_equip_include?(item)
+    end
+    @armors.select { |x| x != nil and x.index != nil }.each_with_index do |item|
+      item.delete if !$game_party.has_item?(item) and !$game_party.members_equip_include?(item)
+    end
+    @items.select { |x| x != nil and x.index != nil }.each_with_index do |item|
+      item.delete if !$game_party.has_item(item) and !$game_party.members_equip_include?(item)
+    end
+    nil_collect
+  end
+  
+  def nil_collect #shortens the size of the array
+    collection = @weapons.select { |x| AEA_IWD::item_with_data?(x) }
+    if collection.size > 0
+      while @weapons.size - 1 > collection.last.index do
+        @weapons.delete(@weapons.size - 1)
+      end
+    end
+    collection = @armors.select { |x| AEA_IWD::item_with_data?(x) }
+    if collection.size > 0
+      while @armors.size - 1 > collection.last.index do
+        @armors.delete(@armors.size - 1)
+      end
+    end
+    collection = @items.select { |x| AEA_IWD::item_with_data?(x) }
+    if collection.size > 0
+      while @items.size - 1 > collection.last.index do
+        @items.delete(@items.size - 1)
+      end
+    end
+  end
+
+  def create_weapon(id)
+    return if id == 0 or id == nil
+    index = @weapons.find { |x| x == nil } || @weapons.size
+    @weapons[index] = Game_Weapon.new(id, index)
+    return @weapons[index]
+  end
+  
+  def create_armor(id)
+    return if id == 0 or id == nil
+    index = @armors.find { |x| x == nil } || @armors.size
+    index = 0 if index < 0
+    @armors[index] = Game_Armor.new(id, index)
+    return @armors[index]
+  end
+  
+  def create_item(id)
+    return if id == 0 or id == nil
+    index = @items.find { |x| x == nil } || @items.size
+    if $data_items[id].is_a?(RPG::UsableItem)
+      @items[index] = Game_UsableItem.new(id, index)
+    else
+      @items[index] = Game_Item.new(id, index)
+    end
+    return @items[index]
+  end
+  
+  def delete_weapon(index)
+    @weapons[index] = nil
+    nil_collect
+  end
+  
+  def delete_armor(index)
+    @armors[index] = nil
+    nil_collect
+  end
+  
+  def delete_item(index)
+    @items[index] = nil
+    nil_collect
+  end
+end
+
+class Game_BaseItem
+  alias aeaiwd_init initialize
+  def initialize
+    aeaiwd_init
+    @object = nil
+  end
+  
+  def object
+    return @object
+  end
+  
+  alias aeaiwd_obje object=
+  def object=(item)
+    if item == nil
+      @class = nil
+      @item_id = 0
+      @object = nil
+      return
+    end
+    if AEA_IWD::item_with_data?(item)
+      @class = item.class
+      @item_id = item.id
+      @object = item
+    else
+      aeaiwd_obje(item)
+      new_item = $game_items.create_weapon(item.id) if is_weapon?
+      new_item = $game_items.create_armor(item.id) if is_armor?
+      new_item = $game_items.create_item(item.id) if is_item?
+      return unless new_item
+      @object = new_item
+    end
+  end
+  
+  def set_equip(is_weapon, item_id)
+    if is_weapon
+      new_item = $game_items.create_weapon(item_id)
+    else
+      new_item = $game_items.create_armor(item_id)
+    end
+    return unless new_item
+    @class = new_item.class
+    @item_id = new_item.id
+    @object = new_item
+  end
+end
+
+class Game_ItemBase
+  attr_accessor :index
+  attr_accessor :id
+  attr_accessor :name
+  attr_accessor :icon_index
+  attr_accessor :description
+  attr_accessor :features
+  attr_accessor :note
+  
+  def initialize(id, index = 0)
+    @index = index
+    @id = id
+    @name = data.name.dup
+    @icon_index = data.icon_index
+    @description = data.description.dup
+    @features = Marshal.load(Marshal.dump(data.features))
+    @note = data.note.dup
+  end
+  
+  def delete
+    $game_items.delete_item(@index)
+  end
+  
+  def class
+    RPG::Item
+  end
+  
+  def data
+    $data_items[@id]
+  end
+end
+
+class Game_Item < Game_ItemBase
+  attr_accessor :itype_id
+  attr_accessor :price
+  attr_accessor :consumable
+  
+  def initialize(id, index = 0)
+    super
+    @scope = 7
+    @itype_id = data.itype_id.dup
+    @price = data.price.dup
+    @consumable = data.consumable.dup
+  end
+  
+  def key_item?
+    $data_items[@id].key_item?
+  end
+end
+
+class Game_UsableItem < Game_Item
+  attr_accessor :scope
+  attr_accessor :occasion
+  attr_accessor :speed
+  attr_accessor :success_rate
+  attr_accessor :repeats
+  attr_accessor :tp_gain
+  attr_accessor :hit_type
+  attr_accessor :animation_id
+  attr_accessor :damage
+  attr_accessor :effects
+  
+  def initialize(id, index = 0)
+    super
+    @scope = data.scope.dup
+    @occasion = data.occasion.dup
+    @speed = data.speed.dup
+    @success_rate = data.success_rate.dup
+    @repeats = data.repeats.dup
+    @tp_gain = data.tp_gain.dup
+    @hit_type = data.hit_type.dup
+    @animation_id = data.animation_id.dup
+    @damage = Marshal.load(Marshal.dump(data.damage))
+    @effects = data.effects.dup
+  end
+  
+  def for_opponent?
+    [1, 2, 3, 4, 5, 6].include?(@scope)
+  end
+
+  def for_friend?
+    [7, 8, 9, 10, 11].include?(@scope)
+  end
+
+  def for_dead_friend?
+    [9, 10].include?(@scope)
+  end
+
+  def for_user?
+    @scope == 11
+  end
+
+  def for_one?
+    [1, 3, 7, 9, 11].include?(@scope)
+  end
+
+  def for_random?
+    [3, 4, 5, 6].include?(@scope)
+  end
+
+  def number_of_targets
+    for_random? ? @scope - 2 : 0
+  end
+
+  def for_all?
+    [2, 8, 10].include?(@scope)
+  end
+
+  def need_selection?
+    [1, 7, 9].include?(@scope)
+  end
+
+  def battle_ok?
+    [0, 1].include?(@occasion)
+  end
+
+  def menu_ok?
+    [0, 2].include?(@occasion)
+  end
+
+  def certain?
+    @hit_type == 0
+  end
+
+  def physical?
+    @hit_type == 1
+  end
+
+  def magical?
+    @hit_type == 2
+  end
+end
+
+class Game_EquipItem < Game_ItemBase
+  attr_accessor :price
+  attr_accessor :etype_id
+  attr_accessor :params
+  attr_accessor :features
+  attr_accessor :strplus
+  attr_accessor :agiplus
+  attr_accessor :conplus
+  attr_accessor :intplus
+  attr_accessor :wisplus
+  attr_accessor :dexplus
+  attr_accessor :lukplus
+  attr_accessor :ranged
+  
+  def initialize(id, index = 0)
+    super
+    @price = data.price
+    @etype_id = data.etype_id
+    @params = data.params.collect { |n| n }
+    @strplus = @agiplus = @conplus = @intplus = @wisplus = @dexplus = @lukplus = 0
+    @hdef = @hmdf = 0.0
+    @ranged = false
+    @strplus = data.strplus if defined?(data.strplus)
+    @agiplus = data.agiplus if defined?(data.agiplus)
+    @conplus = data.conplus if defined?(data.conplus)
+    @intplus = data.intplus if defined?(data.intplus)
+    @wisplus = data.wisplus if defined?(data.wisplus)
+    @dexplus = data.dexplus if defined?(data.dexplus)
+    @lukplus = data.lukplus if defined?(data.lukplus)
+    @ranged = data.ranged if defined?(data.ranged)
+    @hdef = data.hdef if defined?(data.hdef)
+    @hmdf = data.hmdf if defined?(data.hmdf)
+  end
+end
+
+class Game_Weapon < Game_EquipItem
+  attr_accessor :wtype_id
+  attr_accessor :animation_id
+  
+  def initialize(id, index = 0)
+    super
+    @wtype_id = data.wtype_id
+    @animation_id = data.wtype_id
+  end
+  
+  def performance
+    params[2] + params[4] + params.inject(0) { |r, v| r += v }
+  end
+  
+  def delete
+    $game_items.delete_weapon(@index)
+  end
+  
+  def class
+    RPG::Weapon
+  end
+  
+  def data
+    $data_weapons[@id]
+  end
+end
+
+class Game_Armor < Game_EquipItem
+  attr_accessor :atype_id
+  
+  def initialize(id, index = 0)
+    super
+    @atype_id = data.atype_id
+  end
+  
+  def performance
+    params[3] + params[5] + params.inject(0) { |r, v| r += v }
+  end
+  
+  def delete
+    $game_items.delete_armor(@index)
+  end
+  
+  def class
+    RPG::Armor
+  end
+  
+  def data
+    $data_armors[@id]
+  end
+end
+
+class Game_Party  
+  def items
+    @items.keys.collect { |index| $game_items.items[index] }
+  end
+  
+  def weapons
+    @weapons.keys.collect { |index| $game_items.weapons[index] }
+  end
+  
+  def armors
+    @armors.keys.collect { |index| $game_items.weapons[index] }
+  end
+  
+  def item_number(item)
+    return 0 if !AEA_IWD::item_with_data?(item)
+    container = item_container(item.class)
+    container ? container[item.index] || 0 : 0
+  end
+  
+  def has_item?(item, include_equip = false)
+    return true if AEA_IWD::item_with_data?(item) and item_number(item) > 0
+    if !AEA_IWD::item_with_data?(item)
+      container = item_container(item.class)
+      match = container.keys.select { |index| index == item.id }
+      return true if match.size > 0
+    end
+    return include_equip ? members_equip_include?(item) : false
+  end
+  
+  def gain_item(item, amount, include_equip = false)
+    return if item == nil
+    container = item_container(item.class)
+    return unless container
+    if AEA_IWD::item_with_data?(item)
+      last_number = item_number(item)
+      new_number = last_number + amount
+      container[item.index] = [[new_number, 0].max, max_item_number(item)].min
+      if(item.class != RPG::Item)
+        if container[item.index] > 1
+          while container[item.index] > 1 do
+            new_item = $game_items.create_weapon(item.id) if item.class == RPG::Weapon
+            new_item = $game_items.create_armor(item.id) if item.class == RPG::Armor
+            return unless new_item
+            container[new_item.index] = 1
+            container[item.index] -= 1
+          end
+        end
+      end
+      container.delete(item.index) if container[item.index] == 0
+      discard_members_equip(item, -new_number) if new_number < 0 and include_equip
+    else
+      if amount > 0
+        if item.class == RPG::Item
+          new_item = $game_items.create_item(item.id)
+          container[item.index] = [amount, max_item_number(item)].min
+        else
+          number = amount
+          while number > 0 do
+            new_item = $game_items.create_weapon(item.id) if item.class == RPG::Weapon
+            new_item = $game_items.create_armor(item.id) if item.class == RPG::Armor
+            return unless new_item
+            container[new_item.index] = 1
+            number -= 1
+          end
+        end
+      else
+        number = amount * -1
+        if item.class == RPG::Item
+          while number > 0 do
+            match = container.keys.collect { |index| $game_items.items[index] }.select { |obj| obj.id == item.id }
+            if match.size > 0
+              current = item_number(match.last)
+              if current > number
+                container[match.last.index] -= number
+                number = 0
+                if container[match.last.index] == 0
+                  container.delete(match.last.index)
+                  #match.last.delete
+                end
+              else
+                number -= current
+                container[match.last.index] = 0
+                container.delete(match.last.index)
+                #match.last.delete
+              end
+            else
+              number = 0
+            end
+          end
+        else
+          while number > 0 do
+            match = []
+            match = container.keys.collect { |index| $game_items.weapons[index] }.select { |i| AEA_IWD::item_with_data?(i) and container[i.index] > 0 and $game_items.weapons[i.index].id == item.id } if item.class == RPG::Weapon
+            match = container.keys.collect { |index| $game_items.armors[index] }.select { |i| AEA_IWD::item_with_data?(i) and container[i.index] > 0 and $game_items.armors[i.index].id == item.id } if item.class == RPG::Armor
+            if match.size > 0
+              container[match.last.index] = 0
+              container.delete(match.last.index)
+              #match.last.delete
+              number -= 1
+            else
+              discard_members_equip(item, number) if number > 0 and include_equip
+              number = 0
+            end
+          end
+        end
+      end
+    end
+    $game_map.need_refresh = true
+  end
+  
+  def consume_item(item)
+    lose_item(item, 1) if item.class == RPG::Item && item.consumable
+  end
+  
+  alias aeaiwd_discard_members_equip discard_members_equip
+  def discard_members_equip(item, amount)
+    if AEA_IWD::item_with_data?(item)
+      aeaiwd_discard_members_equip(item, amount)
+    else
+      n = amount
+      members.each do |actor|
+        while n > 0 and actor_has_equipment?(item, actor)
+          actor.discard_equip(item)
+          n -= 1
+        end
+      end
+    end
+  end
+  
+  def actor_has_equipment?(item, actor)
+    actor.equips.each do |equip|
+      next if equip == nil
+      return true if item.id == equip.id
+    end
+    return false
+  end
+end
+
+class Game_BattlerBase
+  def equippable?(item)
+    return false if item.class != RPG::Weapon and item.class != RPG::Armor
+    return false if equip_type_sealed?(item.etype_id)
+    return equip_wtype_ok?(item.wtype_id) if item.class == RPG::Weapon
+    return equip_atype_ok?(item.atype_id) if item.class == RPG::Armor
+    return false
+  end
+  
+  alias aeaiwd_usable usable?
+  def usable?(item)
+    if AEA_IWD::item_with_data?(item)
+      return item_conditions_met?(item) if item.class == RPG::Item
+      return false
+    else
+      return aeaiwd_usable(item)
+    end
+  end
+end
+
+class Game_Actor < Game_Battler
+  def change_equip(slot_id, item)
+    if AEA_IWD::item_with_data?(item)
+      return unless trade_item_with_party(item, equips[slot_id])
+      if item
+        if slot_id == 1 && equip_slots[1] == 0
+          return if item.etype_id > 1
+        else
+          return if equip_slots[slot_id] != item.etype_id
+        end
+      end
+      @equips[slot_id].object = item
+    else
+      if item == nil
+        return unless trade_item_with_party(item, equips[slot_id])
+        @equips[slot_id].object = item
+        return
+      end
+      new_item = $game_items.create_weapon(item.id) if item.class == RPG::Weapon
+      new_item = $game_items.create_armor(item.id) if item.class == RPG::Armor
+      return unless new_item
+      return unless trade_item_with_party(new_item, equips[slot_id])
+      if slot_id == 1 && equip_slots[1] == 0
+        return if new_item.etype_id > 1
+      else
+        return if equip_slots[slot_id] != new_item.etype_id
+      end
+      @equips[slot_id].object = new_item
+    end
+    refresh
+  end
+  
+  def force_change_equip(slot_id, item)
+    if AEA_IWD::item_with_data?(item)
+      @equips[slot_id].object = item
+    else
+      new_item = $game_items.create_weapon(item.id) if item.class == RPG::Weapon
+      new_item = $game_items.create_armor(item.id) if item.class == RPG::Armor
+      return unless new_item
+      @equips[slot_id].object = new_item
+    end
+    release_unequippable_items(false)
+    refresh
+  end
+  
+  def discard_equip(item)
+    if AEA_IWD::item_with_data?(item)
+      slot_id = equips.index(item)
+      @equips[slot_id].object = nil if slot_id
+      item.delete if slot_id
+    else
+      index = @equips.index { |e| AEA_IWD::item_with_data?(e.object) and e.object.id == item.id }
+      return unless index
+      @equips[index].object.delete
+      @equips[index].object = nil
+    end
+  end
+  
+  def release_unequippable_items(item_gain = true)
+    loop do
+      last_equips = equips.dup
+      @equips.each_with_index do |item, i|
+        if !equippable?(item.object)
+          next if item.object == nil
+          if i == 1 and dual_wield? and item.object.etype_id > 1
+            trade_item_with_party(nil, item.object) if item_gain
+            item.object = nil
+          else if item.object.etype_id != equip_slots[i]
+              trade_with_party(nil, item.object) if item_gain
+              item.object = nil
+            end
+          end
+        end
+      end
+      return if equips == last_equips
+    end
+  end
+  
+  def optimize_equipments
+    clear_equipments
+    equip_slots.size.times do |i|
+      next if !equip_change_ok?(i)
+      items = $game_party.equip_items.select do |item|
+        (item.etype_id == equip_slots[i] or
+        (item.etype_id == 1 and i == 1)) &&
+        equippable?(item) && item.performance >= 0
+      end
+      change_equip(i, items.max_by { |item| item.performance })
+    end
+  end
+end
+
+class Window_ItemList < Window_Selectable
+  def make_item_list
+    @data = []
+    $game_party.all_items.each_with_index do |item|
+      next if item == nil
+      @data.push([item.index, item.class]) if include?(item)
+    end
+    @data.push(nil) if include?(nil)
+  end
+  
+  def current_item_enabled?
+    enable?(item)
+  end
+  
+  def item
+    if @data && index >= 0
+      return unless @data[index]
+      return $game_items.items[@data[index][0]] if @data[index][1] == RPG::Item
+      return $game_items.weapons[@data[index][0]] if @data[index][1] == RPG::Weapon
+      return $game_items.armors[@data[index][0]] if @data[index][1] == RPG::Armor
+    end
+    nil
+  end
+  
+  def include?(item)
+    if AEA_IWD::item_with_data?(item)
+      case @category
+        when :item
+          return item.class == RPG::Item && !item.key_item?
+        when :weapon
+          return item.class == RPG::Weapon
+        when :armor
+          return item.class == RPG::Armor
+        when :key_item
+          return item.class == RPG::Item && item.key_item?
+        else
+          false
+      end
+    end
+    false
+  end
+  
+  def draw_item(index)
+    return unless @data[index]
+    item = $game_items.items[@data[index][0]] if @data[index][1] == RPG::Item
+    item = $game_items.weapons[@data[index][0]] if @data[index][1] == RPG::Weapon
+    item = $game_items.armors[@data[index][0]] if @data[index][1] == RPG::Armor
+    if item
+      rect = item_rect(index)
+      rect.width -= 4
+      draw_item_name(item, rect.x, rect.y, enable?(item))
+      draw_item_number(rect, item)
+    end
+  end
+  
+  def select_last
+    select(0)
+  end
+  
+  alias aeaiwd_draw_item_number draw_item_number
+  def draw_item_number(rect, item)
+    if item.class == RPG::Item
+      aeaiwd_draw_item_number(rect, item)
+    end
+  end
+end
+
+class Window_EquipItem
+  def include?(item)
+    return true if item == nil
+    return false unless item.is_a?(Game_EquipItem)
+    return false if @slot_id < 0
+    return false if item.etype_id != @actor.equip_slots[@slot_id]
+    return @actor.equippable?(item)
+  end
+end
+
+class Game_Map
+  alias aeaiwd_refresh refresh
+  def refresh
+    $game_items.garbage_collect
+    aeaiwd_refresh
+  end
+end

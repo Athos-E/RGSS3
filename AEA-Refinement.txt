@@ -1,0 +1,142 @@
+=begin
+----------------------------------------------------------------------------
+--------------------------------- INFO -------------------------------------
+----------------------------------------------------------------------------
+Criador: Akaiger, créditos: Equipe RMVX ACE
+Nome: Athos' Refinement
+Função: Permite a armas e armaduras a serem refinadas.
+Requerimento: AEA-ItemWithData
+----------------------------------------------------------------------------
+
+Sistema simples de refinamento, onde as armas ganham ATK/MATK e as armaduras
+ganham DEF/MDEF (e HDEF/HMDEF se estiver usando o RPG Attributes).
+
+=end
+module AEA_R
+#----------------------------------------------------------------------------
+#----------------------------- CONFIGURAÇÃO ---------------------------------
+#----------------------------------------------------------------------------
+  MAX_REFINEMENT_LEVEL = 10 #Nível máximo de Refino
+  
+  BREAK_ON_FAILURE = false #Item quebra ao falhar o refino?
+  BREAK_ON_NEGATIVE = false #Item quebra se falhar refino já sem estar refinado?
+  
+  #Colocar 0 em qualquer um dos valores abaixo vai negar aquele bônus em específico
+  #Se quiser negar todo o bônus de MATK, por exemplo, terá que colocar 0 nas duas
+  #configurações.
+  
+  #Valor final de ATK/MATK para adicionar por nivel de refino
+  ATK_PER_REFINE = 1 
+  MATK_PER_REFINE = 1
+  #Valor percentual (%) de ATK/MATK para adicionar por nível de refino
+  PERCENT_ATK_PER_REFINE = 5
+  PERCENT_MATK_PER_REFINE = 5
+  
+  #Valor final de DEF/MDEF para adicionar por nivel de refino
+  DEF_PER_REFINE = 1
+  MDEF_PER_REFINE = 1
+  #Valor percentual (%) de DEF/MDEF para adicionar por nível de refino
+  PERCENT_DEF_PER_REFINE = 5
+  PERCENT_MDEF_PER_REFINE = 5
+  
+  #Valor percentual (%) de HDEF/HMDEF para adicionar por nível de refino
+  #Ignorar se não usando o RPG Attributes
+  P_HDEF_PER_REFINE = 5
+  P_HMDEF_PER_REFINE = 5
+  
+#---------------------------------------------------------------------------
+#--------------------------- FIM DA CONFIGURAÇÃO ---------------------------
+#---------------------------------------------------------------------------
+end
+#---------------------------------------------------------------------------
+#--------------------------------- SCRIPT ----------------------------------
+#---------------------------------------------------------------------------  
+
+class Game_EquipItem < Game_ItemBase
+  attr_reader :refinement
+  
+  alias aear_init initialize
+  def initialize(id, index = 0)
+    aear_init(id, index)
+    @refinement = 0
+  end
+  
+  alias aear_name name
+  def name
+    return aear_name + " +#{@refinement}" if @refinement > 0
+    return aear_name
+  end
+  
+  def refine(level = 1)
+    @refinement += level
+    @refinement = AEA_R::MAX_REFINEMENT_LEVEL if @refinement > AEA_R::MAX_REFINEMENT_LEVEL
+  end
+  
+  def rng_refine(rng = 0.5)
+    return if @refinement == AEA_R::MAX_REFINEMENT_LEVEL
+    roll = rand()
+    if roll > rng
+      refine
+    else
+      if AEA_R::BREAK_ON_FAILURE
+        delete
+      else
+        refine(-1) if @refinement > 0
+        delete if AEA_R::BREAK_ON_NEGATIVE and @refinement <= 0
+      end
+    end
+  end
+  
+  alias aear_params params
+  def params
+    aear_params
+  end
+end
+
+class Game_Weapon < Game_EquipItem
+  def params
+    @_params = super.dup
+    @_params.each_with_index do |value, i|
+      case i
+        when 2
+          @_params[i] += (@refinement * AEA_R::ATK_PER_REFINE) + ((value * @refinement * AEA_R::PERCENT_ATK_PER_REFINE).to_f / 100).to_i
+        when 4
+          @_params[i] += (@refinement * AEA_R::MATK_PER_REFINE) + ((value * @refinement * AEA_R::PERCENT_MATK_PER_REFINE).to_f / 100).to_i
+      end
+    end
+    return @_params
+  end
+end
+
+class Game_Armor < Game_EquipItem
+  def params
+    @_params = super.dup
+    @_params.each_with_index do |value, i|
+      case i
+        when 3
+          @_params[i] += (@refinement * AEA_R::DEF_PER_REFINE) + ((value * @refinement * AEA_R::PERCENT_DEF_PER_REFINE).to_f / 100).to_i
+        when 5
+          @_params[i] += (@refinement * AEA_R::MDEF_PER_REFINE) + ((value * @refinement * AEA_R::PERCENT_MDEF_PER_REFINE).to_f / 100).to_i
+      end
+    end
+    return @_params
+  end
+  
+  def hdef
+    if defined?(@hdef) and @hdef != nil
+      @_hdef = super
+      @_hdef *= 1 + (((@refinement * AEA_R::P_HDEF_PER_REFINE).to_f) / 100)
+      return @_hdef
+    end
+    return nil
+  end
+  
+  def hmdf
+    if defined?(@hmdf) and @hmdf != nil
+      @_hmdf = super
+      @_hmdf *= 1 + (((@refinement * AEA_R::P_HMDEF_PER_REFINE).to_f) / 100)
+      return @_hmdf
+    end
+    return nil
+  end
+end
