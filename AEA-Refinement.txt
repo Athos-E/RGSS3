@@ -11,6 +11,33 @@ Requerimento: AEA-ItemWithData
 Sistema simples de refinamento, onde as armas ganham ATK/MATK e as armaduras
 ganham DEF/MDEF (e HDEF/HMDEF se estiver usando o RPG Attributes).
 
+Comandos:
+
+------
+$game_party.members[x].equips[y].rng_refine
+      OU
+$game_actors[x].equips[y].rng_refine
+
+
+
+Refina o equipamento em +1 baseado em uma chance (padrão: 50%), em caso de falha
+perde um refinamento. A chance pode ser alterada usando rng_refine('chance'). O
+valor é um valor numérico de 0 a 100.
+------
+$game_party.members[x].equips[y].refine
+      OU
+$game_actors[x].equips[y].refine
+
+
+
+Refina o equipamento sem chance de falha em +1(padrão). O valor pode ser definido
+em refine('valor'). Numérico de -10 a 10. Valores negativos removerão o refino.
+Sem chance de quebra por este comando.
+------
+
+x = membro ou herói
+y = slot de equipamento (precisa estar ocupado, retornará erro se vazio)
+
 =end
 module AEA_R
 #----------------------------------------------------------------------------
@@ -72,10 +99,11 @@ class Game_EquipItem < Game_ItemBase
     @refinement = AEA_R::MAX_REFINEMENT_LEVEL if @refinement > AEA_R::MAX_REFINEMENT_LEVEL
   end
   
-  def rng_refine(rng = 0.5)
+  def rng_refine(chance = 50)
+    rng = chance.to_f / 100
     return if @refinement == AEA_R::MAX_REFINEMENT_LEVEL
     roll = rand()
-    if roll > rng
+    if roll < rng
       refine
     else
       if AEA_R::BREAK_ON_FAILURE
