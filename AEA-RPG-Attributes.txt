@@ -1,0 +1,795 @@
+=begin
+----------------------------------------------------------------------------
+--------------------------------- INFO -------------------------------------
+----------------------------------------------------------------------------
+Criador: Akaiger, créditos: Equipe RMVX ACE
+Nome: Athos' RPG Attributes
+Função: Criar atributos funcionais baseados em RPGs e MMOs
+----------------------------------------------------------------------------
+Inspirado em Ragnarok e D&D.
+
+Obs.: Esses atributos não fazem com que os parâmetros de Max HP, Max MP, ATK,
+MATK, DEF e MDEF na Database sejam anulados. Mas AGI e LUK sim. Agi e a luk 
+do banco de dados se torna inútil. A agi e a luk usada aqui é outra, definida
+por notetags e distribuição de pontos feita no meu script.
+
+Atributos:
+
+STR - Aumenta o ATK com armas de curto alcance. Aumenta um pouco ATK com
+armas de curto alcance.
+
+AGI - Aumenta a EVA e a chance de atacar primeiro, evita ataques surpresa.
+Aumenta um pouco de DEF.
+
+CON - Aumenta HP MAX, DEF e um pouco de MDEF.
+
+INT - Aumenta MP MAX e MATK. Aumenta chance de aplicar efeitos de status.
+
+WIS - Aumenta MP MAX, MDEF, PHA (Pharmacology) e um pouco de MATK.
+Aumenta um pouco o CRIT EVA. Diminui chance de receber efeitos de status.
+
+DEX - Aumenta o HIT e ATK com armas de longo alcance. Aumenta um pouco
+CRIT, MDEF e ATK com armas de curto alcance. Aumenta chance de ataque
+surpresa.
+
+LUK - Aumenta CRIT e CRIT EVA. Aumenta um pouco o ATK, MATK, HIT e EVA.
+
+-PDR ( Physical Damage Rate ) e MDR ( Magic Damage Rate ) vão agora aumentar
+o dano que o usuário causa com uma skill daquele tipo, ao invés de reduzir dano
+que recebem.
+-HDEF ( Hard DEF) e HMDF ( Hard MDEF ) fazem a redução de de dano agora.
+
+-----------------Notetags:
+
+<STR: x>
+<AGI: x>
+<CON: x>
+<INT: x>
+<WIS: x>
+<DEX: x>
+<LUK: x>
+
+<hdef: x>
+<hmdf: x>
+
+x: valor
+As tags acima podem ser usadas na database de: Personagem, Inimigo, Arma, 
+Armadura, Classe e de Estado (Efeitos). Isso faz com que você possa definir
+os atributos base dos personagens e inimigos, e também definir os atributos
+bônus que ganha com efeitos de Estado, equipar Armas ou Armaduras e ao estar
+em uma classe específica. HDEF e HMDF só podem ser colocados em equipamentos.
+
+Ex: Personagem é mago,  inicia com 5 de INT, a classe mago te dá 10 de bônus,
+e seu cajado dá +5 e seu chapéu também. Então seu personagem tem 25 de INT.
+5 base e 20 de bônus. O mesmo acontece ao usar um buff que aumente sua int.
+
+<Ranged>
+
+Essa tag é usada em armas e em inimigos. Ela define se o modo de ataque é à
+distância. Usar ela faz com que seu ataque básico seja afetar primariamente
+por DEX ao invés de STR.
+
+-----------------Comandos:
+
+-Aumentar atributo: $game_actors[x].increase_attribute(y)
+(Usa um ponto de atributo)
+
+
+-Checar se dá pra aumentar o atributo: $game_actors[x].increaseenabled?(y)
+(Usado também pra indicar se o comando "+" fica ativado ou desativado no menu
+RTP)
+
+x: id do personagem
+y: símbolo do atributo (:str,:agi,:con,:int,:wis:,:dex,:luk)
+----------------------------------------------------------------------------
+=end
+
+#---------------------------------------------------------------------------
+#---------------------------- CONFIGURAÇÃO ---------------------------------
+#---------------------------------------------------------------------------
+module AEA_RPGATTR
+  
+  
+  #Nome do atributo que aparece no menu
+  STR = "STR"
+  AGI = "AGI"
+  CON = "CON"
+  INT = "INT"
+  WIS = "WIS"
+  DEX = "DEX"
+  LUK = "LUK"
+  
+  # Pontos que você ganha passando de nível
+  LVLUPPOINTS = 3
+  
+#---------------------------------------------------------------------------
+#------------------------- FIM DA CONFIGURAÇÃO -----------------------------
+#---------------------------------------------------------------------------
+
+#---------------------------------------------------------------------------
+#------------------------------- SCRIPT ------------------------------------
+#---------------------------------------------------------------------------  
+  def self.xparam(xparam_id)
+    case xparam_id
+      when 0
+        "HIT"
+      when 1
+        "EVA"
+      when 2
+        "CRIT"
+      when 3
+        "CRIT EVA"
+      else
+        ""
+    end
+  end
+  
+  def self.sparam(sparam_id)
+    case sparam_id
+      when 3
+        "PHA"
+      when 9
+        "EXP RATE"
+      else
+        ""
+    end
+  end
+end
+
+#--------------------------------------------------------------------------
+# * Database
+#--------------------------------------------------------------------------
+
+module DataManager
+  class << self
+    alias aearpgattr_load_database load_database
+  end
+  
+  def self.load_database
+    aearpgattr_load_database
+    load_rangednotetag
+    load_attributenotetag
+  end
+  
+  def self.load_rangednotetag
+    groups = [$data_weapons, $data_enemies]
+    for group in groups
+      for obj in group
+        next if obj.nil?
+        obj.load_rangednotetag
+      end
+    end
+  end
+  
+  def self.load_attributenotetag
+    groups = [$data_weapons, $data_armors, $data_enemies, $data_states, $data_classes, $data_actors]
+    for group in groups
+      for obj in group
+        next if obj.nil?
+        obj.load_attributenotetag
+      end
+    end
+  end
+end
+
+class RPG::BaseItem
+
+  attr_reader :ranged
+  attr_reader :str
+  attr_reader :agi
+  attr_reader :con
+  attr_reader :int
+  attr_reader :wis
+  attr_reader :dex
+  attr_reader :luk
+  
+  def load_rangednotetag
+    @ranged = false
+    self.note.split(/[\r\n]+/).each { |line|
+      case line
+      when /<(?:RANGED|ranged|Ranged)>/i
+        @ranged = true
+      end
+    }
+  end
+  
+  def load_attributenotetag
+    @str = @agi = @con = @int = @wis = @dex = @luk = 0
+    return if self.is_a?(RPG::EquipItem)
+    return if self.is_a?(RPG::UsableItem)
+    
+    self.note.split(/[\r\n]+/).each { |line|
+    case line
+      when /<(?:STR|str|Str):[ ](\d+)>/i
+        @str = $1.to_i
+      when /<(?:AGI|agi|Agi):[ ](\d+)>/i
+        @agi = $1.to_i
+      when /<(?:CON|con|Con):[ ](\d+)>/i
+        @con = $1.to_i
+      when /<(?:INT|int|Int):[ ](\d+)>/i
+        @int = $1.to_i
+      when /<(?:WIS|wis|Wis):[ ](\d+)>/i
+        @wis = $1.to_i
+      when /<(?:DEX|dex|Dex):[ ](\d+)>/i
+        @dex = $1.to_i
+      when /<(?:LUK|luk|Luk):[ ](\d+)>/i
+        @luk = $1.to_i
+      end
+    }
+  end
+end
+
+class RPG::EquipItem < RPG::BaseItem
+  
+  attr_reader :strplus
+  attr_reader :agiplus
+  attr_reader :conplus
+  attr_reader :intplus
+  attr_reader :wisplus
+  attr_reader :dexplus
+  attr_reader :lukplus
+  attr_reader :hdef
+  attr_reader :hmdf
+  
+  def load_attributenotetag
+    @strplus = @agiplus = @conplus = @intplus = @wisplus = @dexplus = @lukplus = 0
+    @hdef = @hmdf = 0.0
+    self.note.split(/[\r\n]+/).each { |line|
+    case line
+      when /<(?:STR|str|Str):[ ](\d+)>/i
+        @strplus = $1.to_i
+      when /<(?:AGI|agi|Agi):[ ](\d+)>/i
+        @agiplus = $1.to_i
+      when /<(?:CON|con|Con):[ ](\d+)>/i
+        @conplus = $1.to_i
+      when /<(?:INT|int|Int):[ ](\d+)>/i
+        @intplus = $1.to_i
+      when /<(?:WIS|wis|Wis):[ ](\d+)>/i
+        @wisplus = $1.to_i
+      when /<(?:DEX|dex|Dex):[ ](\d+)>/i
+        @dexplus = $1.to_i
+      when /<(?:LUK|luk|Luk):[ ](\d+)>/i
+        @lukplus = $1.to_i
+      when /<(?:HDEF|hdef|Hdef):[ ](\d+)>/i
+        @hdef = $1.to_f / 100
+      when /<(?:HMDF|hmdf|Hmdf):[ ](\d+)>/i
+        @hmdf = $1.to_f / 100
+      end
+    }
+  end
+end  
+
+#--------------------------------------------------------------------------
+# * Game_BattlerBase
+#--------------------------------------------------------------------------
+
+class Game_BattlerBase
+  
+  def str; param(101); end
+  def agi; param(102); end
+  def con; param(103); end
+  def int; param(104); end
+  def wis; param(105); end
+  def dex; param(106); end
+  def luk; param(107); end
+  def useless1; param(6); end
+  def useless2; param(7); end
+  def hdef; xparam(50); end
+  def hmdf; xparam(51); end
+  
+  alias aearpgattr_init initialize
+  def initialize
+    @str = @agi = @con = @int = @wis = @dex = @luk = 1
+    @hdef = @hmdf = 0.0
+    aearpgattr_init
+  end
+    
+  alias aearpgattr_parambase param_base
+  def param_base(param_id)
+    result = aearpgattr_parambase(param_id)
+    case param_id
+      when 101
+        result += @str
+      when 102
+        result += @agi
+      when 103
+        result += @con
+      when 104
+        result += @int
+      when 105
+        result += @wis
+      when 106
+        result += @dex
+      when 107
+        result += @luk
+      when 0 #MHP
+        result += (result * (1 + (param(103) / 100))).floor + (5 * param(103))
+      when 1 #MMP
+        result += (result * (1 + ((param(104) / 100) + (param(105) / 200)))).floor + (1 * param(104)) + (2 * param(105))
+      when 2 #ATK
+        if (ranged? == true)
+          result += param(106) + (param(101) / 5).floor
+        else
+          result += param(101) + (param(106) / 5).floor
+        end
+        result += (param(107) / 3).floor
+      when 4 #MATK
+        result += result + (param(104) * 1.5).floor + (param(105) / 5).floor + (param(107) / 3).floor
+      when 3 #DEF
+        result += result + ((param(102) / 5) + (param(103) / 2)).floor
+      when 5 #MDEF
+        result += result + ((param(102) / 5) + param(105) + (param(106) / 5)).floor
+      end
+    return result
+  end
+  
+  alias aearpgattr_xparam xparam
+  def xparam(xparam_id)
+    result = aearpgattr_xparam(xparam_id)
+    case xparam_id
+      when 0 #hit
+        result += 0.84
+        result += (param(106) + (param(107) / 3)).to_f / 100
+      when 1 #eva
+        result += 0.04
+        result += (param(102) + (param(107) / 5)).to_f / 100
+      when 2 #crit
+        result += 0.01
+        result += ((param(107) * 0.3) + (param(106) / 10)).to_f / 100
+      when 3 #crit eva
+        result += ((param(107) / 5) + (param(105) / 10)).to_f / 100
+      #when 7 #hp regen
+      #when 8 #mp regen
+      when 50
+        result = @hdef
+      when 51
+        result = @hmdf
+    end
+    return result
+  end
+  
+  alias aearpgattr_sparam sparam
+  def sparam(sparam_id)
+    result = aearpgattr_sparam(sparam_id)
+    case sparam_id
+      when 3 #pharmacology
+        result += (param(105) + ((param(104) + param(106)) / 2)).to_f / 100
+      when 9 #experience rate
+        result += ((param(105) / 3) + (param(107) / 2)).to_f / 100
+      end
+    return result
+  end
+      
+  def ranged?
+    return false
+  end
+  
+  alias aearpgattr_clearparamplus clear_param_plus
+  def clear_param_plus
+    aearpgattr_clearparamplus
+    @param_plus = [0] * 108
+  end
+    
+  alias aearpgattr_clearbuffs clear_buffs
+  def clear_buffs
+    aearpgattr_clearbuffs
+    @buffs = Array.new(108) {0}
+  end
+  
+  alias aearpgattr_paramplus param_plus
+  def param_plus(param_id)
+    result = aearpgattr_paramplus(param_id)
+    for i in 0..states.length do
+      next if states[i].nil?
+      case param_id
+        when 101
+          result += $data_states[states[i].id].str
+        when 102
+          result += $data_states[states[i].id].agi
+        when 103
+          result += $data_states[states[i].id].con
+        when 104
+          result += $data_states[states[i].id].int
+        when 105
+          result += $data_states[states[i].id].wis
+        when 106
+          result += $data_states[states[i].id].dex
+        when 107
+          result += $data_states[states[i].id].luk
+        end
+    end 
+    if param_id == 2
+      if (ranged? == true)
+        result *= 1 + (param(106) / 200).floor
+      else
+        result *= 1 + (param(101) / 200).floor
+      end
+    end
+    return result
+  end
+end
+
+#--------------------------------------------------------------------------
+# * Game_Battler
+#--------------------------------------------------------------------------
+  
+class Game_Battler < Game_BattlerBase  
+  
+  def luk_effect_rate(user)
+    [1.0 + (user.int - wis) * 0.001, 0.0].max
+  end
+  
+  def apply_critical(damage)
+    damage * 1.4
+  end
+  
+  def make_damage_value(user, item)
+    value = item.damage.eval(user, self, $game_variables)
+    value *= user.pdr if item.physical?
+    value *= user.mdr if item.magical?
+    value *= item_element_rate(user, item)
+    value *= (1 - hdef).to_f if item.physical?
+    value *= (1 - hmdf).to_f if item.magical?
+    value *= rec if item.damage.recover?
+    value = apply_critical(value) if @result.critical
+    value = apply_variance(value, item.damage.variance)
+    value = apply_guard(value)
+    @result.make_damage(value.to_i, item)
+  end
+end
+
+#--------------------------------------------------------------------------
+# * Game_Actor
+#--------------------------------------------------------------------------
+
+class Game_Actor < Game_Battler
+    
+  attr_accessor :apoints
+  
+  alias aearpgattr_gasetup setup
+  def setup(actor_id)
+    aearpgattr_gasetup(actor_id)
+    @str = actor.str if actor.str != 0
+    @agi = actor.agi if actor.agi != 0
+    @con = actor.con if actor.con != 0
+    @int = actor.int if actor.int != 0
+    @wis = actor.wis if actor.wis != 0
+    @dex = actor.dex if actor.dex != 0
+    @luk = actor.luk if actor.luk != 0
+    @apoints = AEA_RPGATTR::LVLUPPOINTS
+    recover_all
+  end
+  
+  alias aearpgattr_galevelup level_up
+  def level_up
+    aearpgattr_galevelup
+    @apoints += AEA_RPGATTR::LVLUPPOINTS
+  end
+  
+  alias aearpgattr_gaparambase param_base
+  def param_base(param_id)
+    result = aearpgattr_gaparambase(param_id) + super
+    return result
+  end
+  
+  alias aearpgattr_gaparamplus param_plus
+  def param_plus(param_id)
+    result = 0
+    case param_id
+      when 101
+        result += equips.compact.inject(super) {|r, item| r += item.strplus }
+        result += self.class.str
+      when 102
+        result += equips.compact.inject(super) {|r, item| r += item.agiplus }
+        result += self.class.agi
+      when 103
+        result += equips.compact.inject(super) {|r, item| r += item.conplus }
+        result += self.class.con
+      when 104
+        result += equips.compact.inject(super) {|r, item| r += item.intplus }
+        result += self.class.int
+      when 105
+        result += equips.compact.inject(super) {|r, item| r += item.wisplus }
+        result += self.class.wis
+      when 106
+        result += equips.compact.inject(super) {|r, item| r += item.dexplus }
+        result += self.class.dex
+      when 107
+        result += equips.compact.inject(super) {|r, item| r += item.lukplus }
+        result += self.class.luk
+      when 2
+        if (ranged? == true)
+          result = equips.compact.inject(super) {|r, item| r += (item.params[2] * (1 + (param(106) / 200))).floor }
+        else
+          result = equips.compact.inject(super) {|r, item| r += (item.params[2] * (1 + (param(101) / 200))).floor }
+        end
+      else
+        result += aearpgattr_gaparamplus(param_id)
+    end
+    return result
+  end
+  
+  alias aearpgattr_gaxparam xparam
+  def xparam(param_id)
+    result = aearpgattr_gaxparam(param_id)
+    case param_id
+      when 50
+        for equip in equips
+          value += equip.hdef
+        end
+      when 51
+        for equip in equips
+          value += equip.hmdf
+        end
+    end
+    return result
+  end
+  
+  def ranged?
+    for equip in equips
+      next if equip.nil?
+      return true if equip.ranged
+    end
+    return false
+  end
+  
+  def increase_attribute(symbol)
+    return if increaseenabled?(symbol) == false
+    @apoints -= 1
+    case symbol
+      when :str
+        @str += 1
+      when :agi
+        @agi += 1
+      when :con
+        @con += 1
+      when :int
+        @int += 1
+      when :wis
+        @wis += 1
+      when :dex
+        @dex += 1
+      when :luk
+        @luk += 1
+    end
+  end
+  
+  def increaseenabled?(symbol)
+    return false if @apoints < 1
+    case symbol
+      when :str
+        return false if @str >= max_level
+      when :agi
+        return false if @agi >= max_level
+      when :con
+        return false if @con >= max_level
+      when :int
+        return false if @int >= max_level
+      when :wis
+        return false if @wis >= max_level
+      when :dex
+        return false if @dex >= max_level
+      when :luk
+        return false if @luk >= max_level
+    end
+    return true
+  end
+end
+
+#--------------------------------------------------------------------------
+# * Game_Enemy
+#--------------------------------------------------------------------------
+
+class Game_Enemy < Game_Battler
+  
+  def ranged?
+    return self.enemy.ranged
+  end
+  
+  alias aearpgattr_einit initialize
+  def initialize
+    aearpgattr_einit
+    @str = enemy.str if enemy.str != 0
+    @agi = enemy.agi if enemy.agi != 0
+    @con = enemy.con if enemy.con != 0
+    @int = enemy.int if enemy.int != 0
+    @wis = enemy.wis if enemy.wis != 0
+    @dex = enemy.dex if enemy.dex != 0
+    @luk = enemy.luk if enemy.luk != 0
+  end
+end
+
+#--------------------------------------------------------------------------
+# * Game_Unit
+#--------------------------------------------------------------------------
+
+class Game_Unit
+  
+  def eva
+    return 1 if members.size == 0
+    members.inject(0) {|r, member| r += member.eva } / members.size
+  end
+  
+  def hit
+    return 1 if members.size == 0
+    members.inject(0) {|r, member| r += member.hit } / members.size
+  end
+  
+end
+
+#--------------------------------------------------------------------------
+# * Game_Party
+#--------------------------------------------------------------------------
+
+class Game_Party < Game_Unit
+
+  def rate_preemptive(troop_eva)
+    (hit >= troop_eva ? 0.05 : 0.03) * (raise_preemptive? ? 4 : 1)
+  end
+
+  def rate_surprise(troop_hit)
+    cancel_surprise? ? 0 : (eva >= troop_hit ? 0.03 : 0.05)
+  end
+end
+
+#---------------------------------------------------------------------------
+#--------------------------- FIM DO SCRIPT ---------------------------------
+#---------------------------------------------------------------------------
+
+#---------------------------------------------------------------------------
+#------------------------ Exibição em Menu (RTP) ---------------------------
+#---------------------------------------------------------------------------
+
+class Window_Base < Window
+  def draw_actor_param(actor, x, y, param_id)
+    change_color(system_color)
+    case param_id
+      when 101
+        vocab = AEA_RPGATTR::STR
+      when 102
+        vocab = AEA_RPGATTR::AGI
+      when 103
+        vocab = AEA_RPGATTR::CON
+      when 104
+        vocab = AEA_RPGATTR::INT
+      when 105
+        vocab = AEA_RPGATTR::WIS
+      when 106
+        vocab = AEA_RPGATTR::DEX
+      when 107
+        vocab = AEA_RPGATTR::LUK
+      else
+        vocab = Vocab::param(param_id)
+      end
+    draw_text(x, y, 120, line_height, vocab)
+    change_color(normal_color)
+    draw_text(x + 100, y, 36, line_height, actor.param(param_id), 2)
+  end
+  
+  def draw_actor_xparam(actor, x, y, xparam_id)
+    change_color(system_color)
+    draw_text(x, y, 120, line_height, AEA_RPGATTR::xparam(xparam_id))
+    change_color(normal_color)
+    if (xparam_id == 1)
+      draw_text(x + 100, y, 36, line_height, (actor.xparam(xparam_id) * 100).to_i, 2)
+      return
+    end
+    draw_text(x + 100, y, 36, line_height, (actor.xparam(xparam_id) * 100).to_i, 2)
+  end
+  
+  def draw_actor_sparam(actor, x, y, sparam_id)
+    change_color(system_color)
+    draw_text(x, y, 120, line_height, AEA_RPGATTR::sparam(sparam_id))
+    change_color(normal_color)
+    draw_text(x + 100, y, 36, line_height, (actor.sparam(sparam_id) * 100 - 100).to_i, 2)
+  end
+end
+
+class Window_Status < Window_Selectable
+  
+  def draw_block3(y)
+    contents.font.size -= 4
+    draw_parameters(28, y - 4)
+    contents.font.size += 4
+    draw_parameters2(200,y)
+    draw_parameters3(360,y)
+    draw_equipments(500, y)
+  end
+  
+  alias aearpgattr_drawparameters draw_parameters
+  def draw_parameters(x, y)
+    7.times {|i| draw_actor_param(@actor, x, y + line_height / 1.1 * i, i + 101) }
+    draw_text(x, y + line_height / 1.1 * 8, 120, line_height, "Pontos:")
+    draw_text(x + 100, y + line_height / 1.1 * 8, 36, line_height, @actor.apoints, 2)
+  end
+  
+  def draw_parameters2(x, y)
+    4.times {|i| draw_actor_param(@actor, x, y + line_height * i, i + 2) }
+    2.times {|i| draw_actor_xparam(@actor, x, y + line_height * (i + 4), i) }
+  end
+  
+  def draw_parameters3(x, y)
+    2.times {|i| draw_actor_xparam(@actor, x, y + line_height * i, i + 2) }
+    draw_actor_sparam(@actor, x, y + line_height * 3, 3)
+    draw_actor_sparam(@actor, x, y + line_height * 5, 9)
+  end
+end
+
+class Window_IncreaseAttr < Window_Command
+  def initialize(actor)
+    @actor = actor
+    super(175, 162)
+    self.opacity = 0
+  end
+  
+  def actor=(actor)
+    return if @actor == actor
+    @actor = actor
+    refresh
+  end
+  
+  def window_width
+    42
+  end
+  
+  def item_height
+    line_height / 1.1
+  end
+  
+  def item_rect(index)
+    rect = Rect.new
+    rect.width = item_width
+    rect.height = item_height
+    rect.x = index % col_max * (item_width + spacing)
+    rect.y = index / col_max * item_height
+    rect
+  end
+  
+  def make_command_list
+    add_command("+", :str, increaseenabled?(:str))
+    add_command("+", :agi, increaseenabled?(:agi))
+    add_command("+", :con, increaseenabled?(:con))
+    add_command("+", :int, increaseenabled?(:int))
+    add_command("+", :wis, increaseenabled?(:wis))
+    add_command("+", :dex, increaseenabled?(:dex))
+    add_command("+", :luk, increaseenabled?(:luk))
+  end
+  
+  def increaseenabled?(symbol)
+    @actor.increaseenabled?(symbol)
+  end
+end
+
+class Scene_Status < Scene_MenuBase
+  alias aearpgattr_start start
+  def start
+    aearpgattr_start
+    @attributegui = Window_IncreaseAttr.new(@actor)
+    @attributegui.set_handler(:str, method(:increase_attribute))
+    @attributegui.set_handler(:agi, method(:increase_attribute))
+    @attributegui.set_handler(:con, method(:increase_attribute))
+    @attributegui.set_handler(:int, method(:increase_attribute))
+    @attributegui.set_handler(:wis, method(:increase_attribute))
+    @attributegui.set_handler(:dex, method(:increase_attribute))
+    @attributegui.set_handler(:luk, method(:increase_attribute))
+    @attributegui.activate
+  end
+  
+  alias aearpgattr_oac on_actor_change
+  def on_actor_change
+    aearpgattr_oac
+    @attributegui.actor = @actor
+    @attributegui.activate
+  end
+  
+  def increase_attribute
+    @actor.increase_attribute(@attributegui.current_symbol)
+    @status_window.refresh
+    @attributegui.refresh
+    @attributegui.activate
+  end
+end
+
+#---------------------------------------------------------------------------
+#--------------------- Fim da Exibição em Menu (RTP) -----------------------
+#---------------------------------------------------------------------------
