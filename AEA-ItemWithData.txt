@@ -58,7 +58,7 @@ class Game_Items
       item.delete if !$game_party.has_item?(item) and !$game_party.members_equip_include?(item)
     end
     @items.select { |x| x != nil and x.index != nil }.each_with_index do |item|
-      item.delete if !$game_party.has_item(item) and !$game_party.members_equip_include?(item)
+      item.delete if !$game_party.has_item?(item) and !$game_party.members_equip_include?(item)
     end
     nil_collect
   end
@@ -212,9 +212,9 @@ class Game_Item < Game_ItemBase
   def initialize(id, index = 0)
     super
     @scope = 7
-    @itype_id = data.itype_id.dup
-    @price = data.price.dup
-    @consumable = data.consumable.dup
+    @itype_id = data.itype_id
+    @price = data.price
+    @consumable = data.consumable
   end
   
   def key_item?
@@ -236,16 +236,16 @@ class Game_UsableItem < Game_Item
   
   def initialize(id, index = 0)
     super
-    @scope = data.scope.dup
-    @occasion = data.occasion.dup
-    @speed = data.speed.dup
-    @success_rate = data.success_rate.dup
-    @repeats = data.repeats.dup
-    @tp_gain = data.tp_gain.dup
-    @hit_type = data.hit_type.dup
-    @animation_id = data.animation_id.dup
+    @scope = data.scope
+    @occasion = data.occasion
+    @speed = data.speed
+    @success_rate = data.success_rate
+    @repeats = data.repeats
+    @tp_gain = data.tp_gain
+    @hit_type = data.hit_type
+    @animation_id = data.animation_id
     @damage = Marshal.load(Marshal.dump(data.damage))
-    @effects = data.effects.dup
+    @effects = Marshal.load(Marshal.dump(data.effects))
   end
   
   def for_opponent?
@@ -446,7 +446,7 @@ class Game_Party
       if amount > 0
         if item.class == RPG::Item
           new_item = $game_items.create_item(item.id)
-          container[item.index] = [amount, max_item_number(item)].min
+          container[new_item.index] = [amount, max_item_number(item)].min
         else
           number = amount
           while number > 0 do
