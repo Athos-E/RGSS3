@@ -33,8 +33,8 @@ module DataManager
     
     alias aeaiwd_extract_save_contents extract_save_contents
     def extract_save_contents(contents)
-      aeaiwd_extract_save_contents(contents)
       $game_items = contents[:items]
+      aeaiwd_extract_save_contents(contents)
     end
   end
 end
@@ -445,6 +445,29 @@ class Game_Party
     else
       if amount > 0
         if item.class == RPG::Item
+          match = container.keys.collect { |index| $game_items.items[index] }.select { |i| i.id == item.id and i.name == item.name }
+          if match
+            match.each do |i|
+              next if i.icon_index != item.icon_index
+              next if i.description != item.description
+              next if i.note != item.note
+              next if i.itype_id != item.itype_id
+              next if i.price != item.price
+              next if i.consumable != item.consumable
+              next if i.scope != item.scope
+              next if i.occasion != item.occasion
+              next if i.speed != item.speed
+              next if i.success_rate != item.success_rate
+              next if i.repeats != item.repeats
+              next if i.tp_gain != item.tp_gain
+              next if i.hit_type != item.hit_type
+              next if i.animation_id != item.animation_id
+              old_number = item_number(i)
+              new_number = old_number + amount
+              container[i.index] = [new_number, max_item_number(item)].min
+              return
+            end
+          end
           new_item = $game_items.create_item(item.id)
           container[new_item.index] = [amount, max_item_number(item)].min
         else

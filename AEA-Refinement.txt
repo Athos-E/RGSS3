@@ -45,6 +45,8 @@ module AEA_R
 #----------------------------------------------------------------------------
   MAX_REFINEMENT_LEVEL = 10 #Nível máximo de Refino
   
+  PERCENT_PRICE = 10 #Aumento do valor do item em % por refino, 0 para nenhum.
+  
   BREAK_ON_FAILURE = false #Item quebra ao falhar o refino?
   BREAK_ON_NEGATIVE = false #Item quebra se falhar refino já sem estar refinado?
   
@@ -113,6 +115,10 @@ class Game_EquipItem < Game_ItemBase
         delete if AEA_R::BREAK_ON_NEGATIVE and @refinement <= 0
       end
     end
+  end
+  
+  def price
+    (@price * (1.0 + (@refinement.to_f / 100 * AEA_R::PERCENT_PRICE))).to_i
   end
   
   alias aear_params params
