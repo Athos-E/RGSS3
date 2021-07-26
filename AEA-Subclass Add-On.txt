@@ -1,0 +1,305 @@
+=begin
+----------------------------------------------------------------------------
+--------------------------------- INFO -------------------------------------
+----------------------------------------------------------------------------
+Criador: Akaiger, créditos: Equipe RMVX ACE
+Nome: Athos' Subclass Add-On
+Função: Adicionar Subclasse
+----------------------------------------------------------------------------
+Comandos:
+
+EXP: $game_actors[x].sjob_exp
+LEVEL: $game_actors[x].sjob_level
+GANHAR EXP: $game_actors[x].gain_sjob_exp(exp)
+MUDAR LEVEL: $game_actors[x].change_sjob_level(level, show)
+MUDAR SUBCLASSE: $game_actors[x].change_sclass(y)
+
+x: id do personagem
+exp: quantidade de xp
+level: level alvo
+show: true ou false para mostrar level up se acontecer
+y: id da classe
+
+=end
+#---------------------------------------------------------------------------
+#---------------------------- CONFIGURAÇÃO ---------------------------------
+#---------------------------------------------------------------------------
+module AEASJobPluginCore
+  #-------------------------------------------------------------------------
+  # Vocab
+  #-------------------------------------------------------------------------
+  # Voc. para ganho de Exp de Subclasse
+  ObtainSJobExp = "%s pontos de experiência de Subclasse!"
+  # Voc. para abreviação de level de classe
+  SJobLevelShort = "LV/Sc"
+  # Voc. para Exp de classe total
+  SJobExpTotal = "EXP/Sc"
+  #-------------------------------------------------------------------------
+  # Multiplicador de Exp de Subclasse
+  SJobExpMult = 0.5
+  # Mostrar subclasse se for igual a classe?
+  SJobEShow = false
+  # Ganhar EXP se subclasse for igual a classe?
+  SJobEGain = false
+  #-------------------------------------------------------------------------
+  
+#---------------------------------------------------------------------------
+#------------------------- FIM DA CONFIGURAÇÃO -----------------------------
+#---------------------------------------------------------------------------
+
+#---------------------------------------------------------------------------
+#------------------------------- SCRIPT ------------------------------------
+#---------------------------------------------------------------------------
+  def self.GetSJobExpGain(base_exp)
+    jobexp = (base_exp * @SJobExpMult).floor
+  end
+end
+
+module BattleManager
+  class << self
+    alias dplyexp2 display_exp
+    def display_exp
+      dplyexp2
+      if AEASJobPluginCore.GetSJobExpGain($game_troop.exp_total) > 0
+        text = sprintf(AEASJobPluginCore::ObtainSJobExp, AEASJobPluginCore.GetSJobExpGain($game_troop.exp_total))
+        $game_message.add('\.' + text)
+      end
+      wait_for_message
+    end
+    def gain_exp
+      $game_party.all_members.each do |actor|
+        actor.gain_exp($game_troop.exp_total)
+        actor.gain_job_exp($game_troop.exp_total)
+        actor.gain_sjob_exp($game_troop.exp_total) if AEASJobPluginCore::SJobEGain
+      end
+      wait_for_message
+    end
+  end
+end
+
+class Game_Actor < Game_Battler
+  
+  alias aeasclass_setup setup
+  def setup(actor_id)
+    @sclass_id = $data_actors[actor_id].class_id
+    @sjob_level = AEAJobModCore::JobLevelSpecs[$data_actors[actor_id].class_id - 1][1]
+    aeasclass_setup(actor_id)
+    init_sjob_exp
+  end
+  
+  alias aeasclass_initskills init_skills
+  def init_skills
+    aeasclass_initskills
+    self.sclass.learnings.each do |learning|
+      learn_skill(learning.skill_id) if learning.level == @sjob_level
+    end
+  end
+  
+  def sclass
+    $data_classes[@sclass_id]
+  end
+
+  def sclass_id
+    @sclass_id
+  end
+  
+  def init_sjob_exp
+    @job_exp[@sclass_id] = current_level_sjob_exp
+  end
+  
+  def sjob_exp
+    @job_exp[@sclass_id]
+  end
+  
+  def sjob_level
+    @sjob_level
+  end
+  
+  def exp_for_sjob_level(sjob_level)
+    $data_classes[@sclass_id].exp_for_level(sjob_level)
+  end
+  
+  def current_level_sjob_exp
+    exp_for_sjob_level(@sjob_level)
+  end
+  
+  def next_level_sjob_exp
+    exp_for_sjob_level(@sjob_level + 1)
+  end
+  
+  def max_sjob_level
+    AEAJobModCore::JobLevelSpecs[@sclass_id - 1][2]
+  end
+  
+  def max_sjob_level?
+    @sjob_level >= max_sjob_level
+  end
+  
+  def change_sjob_exp(sjob_exp, show)
+    if AEASJobPluginCore::SJobEGain
+      @job_exp[@sclass_id] = [sjob_exp, 0].max
+      last_sjob_level = @sjob_level
+      last_sjob_skills = skills
+      sjob_level_up while !max_sjob_level? && self.exp >= next_level_sjob_exp
+      sjob_level_down while self.sjob_exp < current_level_sjob_exp
+      display_sjob_level_up(skills - last_skills) if show && @sjob_level > last_sjob_level
+      refresh
+    end
+  end
+  
+  def sjob_level_up
+    @sjob_level += 1
+    self.sclass.learnings.each do |learning|
+      learn_skill(learning.skill_id) if learning.level == @sjob_level
+    end
+  end
+  
+  def sjob_level_down
+    @sjob_level -= 1
+  end
+  
+  def display_sjob_level_up(new_skills)
+    $game_message.new_page
+    $game_message.add(sprintf(Vocab::LevelUp, @name, AEAJobModCore::JobLevel, @sjob_level))
+    new_skills.each do |skill|
+      $game_message.add(sprintf(Vocab::ObtainSkill, skill.name))
+    end
+  end
+
+  def gain_sjob_exp(sjob_exp)
+    sjob_exp *= AEASJobPluginCore.GetSJobExpGain(sjob_exp)
+    change_sjob_exp(self.sjob_exp + (sjob_exp * final_sjob_exp_rate).to_i, true)
+  end
+  
+  def change_sjob_level(sjob_level, show)
+    if AEASJobPluginCore::SJobEGain
+      sjob_level = [[sjob_level, max_sjob_level].min, 1].max
+      change_sjob_exp(exp_for_sjob_level(sjob_level), show)
+    end
+  end
+  
+  def change_sclass(sclass_id, keep_exp = true)
+    @job_exp[sclass_id] = sjob_exp if keep_exp
+    @sclass_id = sclass_id
+    change_sjob_exp(@job_exp[@sclass_id] || 0, false)
+    refresh
+  end
+  
+  alias aeasclass_iniski init_skills
+  def init_skills
+    aeasclass_iniski
+    self.sclass.learnings.each do |learning|
+      learn_skill(learning.skill_id) if learning.level <= @sjob_level
+    end
+  end
+  
+  def sclass_features
+    [sclass].inject([]) { |r, obj| r + obj.features }
+  end
+  
+  def sclass_feature_by_code(code)
+    sclass_features.select { |ft| ft.code == code }
+  end
+  
+  def sclass_feature_set(code)
+    sclass_feature_by_code(code).inject([]) { |r, ft| r |= [ft.data_id] }
+  end
+  
+  alias aeasclass_added_skill_types added_skill_types
+  def added_skill_types
+    aeasclass_added_skill_types + sclass_feature_set(FEATURE_STYPE_ADD)
+  end
+end
+#---------------------------------------------------------------------------
+#------------------------ Exibição em Menu (RTP) ---------------------------
+#---------------------------------------------------------------------------
+class Window_Base < Window
+  
+  def draw_actor_sjob_level(actor, x, y)
+    change_color(system_color)
+    draw_text(x, y, 32, line_height, AEASJobPluginCore::SJobLevelShort)
+    change_color(normal_color)
+    draw_text(x + 32, y, 24, line_height, actor.sjob_level, 2)
+  end
+                    
+  alias originaldss2 draw_actor_simple_status
+  def draw_actor_simple_status(actor, x, y)
+    if (AEASJobPluginCore::SJobEShow or actor.class_id != actor.sclass_id)
+      draw_actor_sjob_level(actor, x + 60, y + line_height * 2)
+      draw_text(x + 120, y, width, line_height, " "*actor.class.name.length + "/" + actor.sclass.name)
+    end
+    originaldss2(actor, x, y)
+  end
+  
+  def draw_actor_sclass(actor, x, y, width = 112)
+    change_color(normal_color)
+    draw_text(x, y, width, line_height, actor.sclass.name)
+  end
+end
+
+class Window_Status < Window_Selectable
+    
+  def draw_block1(y)
+    draw_actor_name(@actor, 4, y)
+    draw_actor_class(@actor, 128, y)
+    draw_actor_sclass(@actor, 288, y) if AEASJobPluginCore::SJobEShow
+    draw_actor_nickname(@actor, 448, y)
+  end
+  
+  def draw_block2(y)
+    draw_actor_face(@actor, 8, y)
+    draw_basic_info(136, y)
+    draw_exp_info(264, y)
+    draw_job_exp_info(384, y)
+    draw_sjob_exp_info(504, y) if AEASJobPluginCore::SJobEShow
+  end
+  
+  def draw_exp_info(x, y)
+    s1 = @actor.max_level? ? "-------" : @actor.exp - @actor.current_level_exp
+    s2 = @actor.max_level? ? "-------" : @actor.next_level_exp - @actor.exp
+    s_next = sprintf(Vocab::ExpNext, Vocab::level)
+    change_color(system_color)
+    draw_text(x, y + line_height * 0, 110, line_height, Vocab::ExpTotal)
+    draw_text(x, y + line_height * 2, 110, line_height, s_next)
+    change_color(normal_color)
+    draw_text(x, y + line_height * 1, 110, line_height, s1, 2)
+    draw_text(x, y + line_height * 3, 110, line_height, s2, 2)
+  end
+  
+  alias originaldbi2 draw_basic_info
+  def draw_basic_info(x, y)
+    originaldbi2(x, y)
+    draw_actor_sjob_level(@actor, x + 68, y + line_height * 1) if AEASJobPluginCore::SJobEShow
+  end
+  
+  def draw_job_exp_info(x, y)
+    s1 = @actor.max_job_level? ? "-------" : @actor.job_exp - @actor.current_level_job_exp
+    s2 = @actor.max_job_level? ? "-------" : @actor.next_level_job_exp - @actor.job_exp
+    s_next = sprintf(AEAJobModCore::JobExpNext, AEAJobModCore::JobLevelShort)
+    change_color(system_color)
+    draw_text(x, y + line_height * 0, 110, line_height, AEAJobModCore::JobExpTotal)
+    draw_text(x, y + line_height * 2, 110, line_height, s_next)
+    change_color(normal_color)
+    draw_text(x, y + line_height * 1, 110, line_height, s1, 2)
+    draw_text(x, y + line_height * 3, 110, line_height, s2, 2)
+  end
+  
+  def draw_sjob_exp_info(x, y)
+    s1 = @actor.max_sjob_level? ? "-------" : @actor.sjob_exp - @actor.current_level_sjob_exp
+    s2 = @actor.max_sjob_level? ? "-------" : @actor.next_level_sjob_exp - @actor.sjob_exp
+    s_next = sprintf(AEAJobModCore::JobExpNext, AEASJobPluginCore::SJobLevelShort)
+    change_color(system_color)
+    draw_text(x, y + line_height * 0, 110, line_height, AEASJobPluginCore::SJobExpTotal)
+    draw_text(x, y + line_height * 2, 110, line_height, s_next)
+    change_color(normal_color)
+    draw_text(x, y + line_height * 1, 110, line_height, s1, 2)
+    draw_text(x, y + line_height * 3, 110, line_height, s2, 2)
+  end
+end
+#---------------------------------------------------------------------------
+#--------------------- Fim da Exibição em Menu (RTP) -----------------------
+#---------------------------------------------------------------------------
+
+#---------------------------------------------------------------------------
+#--------------------------- FIM DO SCRIPT ---------------------------------
+#---------------------------------------------------------------------------

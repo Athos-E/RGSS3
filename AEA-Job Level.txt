@@ -1,0 +1,354 @@
+=begin
+----------------------------------------------------------------------------
+--------------------------------- INFO -------------------------------------
+----------------------------------------------------------------------------
+Criador: Akaiger, créditos: Equipe RMVX ACE
+Nome: Athos' Job Level
+Função: Separar o nível e atributos do personagem das classes e dar níveis a
+cada classe.
+----------------------------------------------------------------------------
+ O Sistema usa um método de script similar ao da engine com várias modifica-
+ções pra facilitar a configuração. Utiliza-se classes do database como base 
+para atributos e curvas de exp base e de job(classe).  Assim, é possível 
+editar e fazer curvas dos atributos e exp através da engine.  O  nível  de  
+classe também tem um nível inicial, mínimo e máximo e também  é  responsável
+por quando se aprenderá as habilidades, também selecionado no database.
+
+Comandos:
+
+EXP: $game_actors[x].job_exp
+LEVEL: $game_actors[x].job_level
+GANHAR EXP: $game_actors[x].gain_job_exp(exp)
+MUDAR LEVEL: $game_actors[x].change_job_level(level, show)
+
+x: id do personagem
+exp: quantidade de xp
+level: level pra atingir
+show: true ou false para mostrar level up se acontecer
+
+=end
+#---------------------------------------------------------------------------
+#---------------------------- CONFIGURAÇÃO ---------------------------------
+#---------------------------------------------------------------------------
+module AEAJobModCore
+  #-------------------------------------------------------------------------
+  # Vocabulário
+  # Voc. para Classe
+  Job = "Classe"
+  # Voc. para level de classe
+  JobLevel =  "LV de Classe"
+  # Voc. para abreviação de level de classe
+  JobLevelShort = "LV/C"
+  # Voc. para Exp de classe total
+  JobExpTotal = "EXP/C"
+  # Voc. para Exp que falta para passar de level de classe
+  JobExpNext = "Próximo %s"
+  # Voc. para ganho de Exp de classe
+  ObtainJobExp = "%s pontos de experiência de classe!"
+  #-------------------------------------------------------------------------
+  # Id das classes que serão usadas para as curvas de XP (database)
+  # Level do Personagem
+  LevelId = 1
+  #-------------------------------------------------------------------------
+  # Multiplicador EXP de classe ( Base * Mult )
+  #-------------------------------------------------------------------------
+  @JobExpMult = 1
+  #-------------------------------------------------------------------------
+  # Leveis mínimos, iniciais e máximos de cada classe
+  #-------------------------------------------------------------------------
+  JobLevelSpecs = [ #[Min, Initial, Max] Class Id
+                          [1, 1, 50], #1 - (Curva) Level de Personagem por Padrão (Ignorar)
+                          [1, 1, 50], #2
+                          [1, 1, 50], #3
+                          [1, 1, 50], #4
+                          [1, 1, 50], #5
+                          [1, 1, 50], #6
+                          [1, 1, 50], #7
+                          [1, 1, 50], #8
+                          [1, 1, 50], #9
+                          [1, 1, 50], #10
+                          [1, 1, 50], #11
+                          [1, 1, 50], #12
+                          [1, 1, 50], #13
+                          [1, 1, 50], #14
+                          [1, 1, 50], #15
+                          [1, 1, 50], #16
+                          [1, 1, 50], #17
+                          [1, 1, 50], #18
+                          [1, 1, 50], #19
+                          [1, 1, 50], #20
+                          [1, 1, 50], #21
+                          [1, 1, 50], #22
+                          [1, 1, 50], #23
+                          [1, 1, 50], #24
+                          [1, 1, 50], #25
+                          [1, 1, 50], #26
+                          [1, 1, 50]  #27
+  ]
+#---------------------------------------------------------------------------
+#------------------------- FIM DA CONFIGURAÇÃO -----------------------------
+#---------------------------------------------------------------------------
+
+#---------------------------------------------------------------------------
+#------------------------------- SCRIPT ------------------------------------
+#---------------------------------------------------------------------------
+
+  def self.GetJobExpGain(base_exp)
+    jobexp = (base_exp * @JobExpMult).floor
+  end
+end
+
+module BattleManager
+  class << self
+    alias dplyexp display_exp
+    def display_exp
+      dplyexp
+      if AEAJobModCore.GetJobExpGain($game_troop.exp_total) > 0
+        text = sprintf(AEAJobModCore::ObtainJobExp, AEAJobModCore.GetJobExpGain($game_troop.exp_total))
+        $game_message.add('\.' + text)
+      end
+      wait_for_message
+    end
+    def gain_exp
+      $game_party.all_members.each do |actor|
+        actor.gain_exp($game_troop.exp_total)
+        actor.gain_job_exp($game_troop.exp_total)
+      end
+      wait_for_message
+    end
+  end
+end
+
+#---------------------------------------------------------------------------
+#------------------------------ ADAPTAÇÃO ----------------------------------
+#---------------------------------------------------------------------------
+class Game_Actor < Game_Battler
+  
+  alias aeajlevel_setup setup
+  def setup(actor_id)
+    @job_level = AEAJobModCore::JobLevelSpecs[$data_actors[actor_id].class_id - 1][1]
+    @job_exp = {}
+    aeajlevel_setup(actor_id)
+    init_job_exp
+  end
+  
+  def char_exp_cid
+    $data_classes[AEAJobModCore::LevelId]
+  end   
+  
+  def init_exp
+    @exp[char_exp_cid] = current_level_exp
+  end
+  
+  def exp
+    @exp[char_exp_cid]
+  end
+  
+  def exp_for_level(level)
+    self.char_exp_cid.exp_for_level(level)
+  end
+  
+  def init_skills
+    @skills = []
+    self.char_exp_cid.learnings.each do |learning|
+      learn_skill(learning.skill_id) if learning.level == @level
+    end
+    self.class.learnings.each do |learning|
+      learn_skill(learning.skill_id) if learning.level <= @job_level
+    end
+  end
+  
+  def change_exp(exp, show)
+    @exp[char_exp_cid] = [exp, 0].max
+    last_level = @level
+    level_up while !max_level? && self.exp >= next_level_exp
+    level_down while self.exp < current_level_exp
+    refresh
+  end
+  
+  def level_up
+    @level += 1
+    self.char_exp_cid.learnings.each do |learning|
+      learn_skill(learning.skill_id) if learning.level == @level
+    end
+  end
+  def level_down
+    @level -= 1
+  end
+  
+  def display_level_up(new_skills)
+    $game_message.new_page
+    $game_message.add(sprintf(Vocab::LevelUp, @name, Vocab::level, @level))
+  end
+  
+  def param_base(param_id)
+    if param_id < 8
+      base = char_exp_cid.params[param_id, @level]
+      job = self.class.params[param_id, @job_level]
+      return base + job
+    else
+      return 0
+    end
+  end
+  
+  def change_class(class_id, keep_exp = false)
+    @job_exp[class_id] = job_exp if keep_exp
+    @class_id = class_id
+    change_job_exp(@job_exp[@class_id] || 0, false)
+    refresh
+  end
+  
+#---------------------------------------------------------------------------
+#--------------------------- FIM DA ADAPTAÇÃO ------------------------------
+#---------------------------------------------------------------------------
+    
+  def exp_for_job_level(job_level)
+    $data_classes[@class_id].exp_for_level(job_level)
+  end
+  
+  def init_job_exp
+    @job_exp[@class_id] = current_level_job_exp
+  end
+  
+  def job_exp
+    @job_exp[@class_id]
+  end
+  
+  def job_level
+    @job_level
+  end
+  
+  def current_level_job_exp
+    exp_for_job_level(@job_level)
+  end
+  
+  def next_level_job_exp
+    exp_for_job_level(@job_level + 1)
+  end
+  
+  def max_job_level
+    AEAJobModCore::JobLevelSpecs[@class_id - 1][2]
+  end
+  
+  def max_job_level?
+    @job_level >= max_job_level
+  end
+  
+  def change_job_exp(job_exp, show)
+    @job_exp[@class_id] = [job_exp, 0].max
+    last_job_level = @job_level
+    last_job_skills = skills
+    job_level_up while !max_job_level? && self.exp >= next_level_job_exp
+    job_level_down while self.job_exp < current_level_job_exp
+    display_job_level_up(skills - last_skills) if show && @job_level > last_job_level
+    refresh
+  end
+  
+  def job_level_up
+    @job_level += 1
+    self.class.learnings.each do |learning|
+      learn_skill(learning.skill_id) if learning.level == @job_level
+    end
+  end
+  
+  def job_level_down
+    @job_level -= 1
+  end
+  
+  def display_job_level_up(new_skills)
+    $game_message.new_page
+    $game_message.add(sprintf(Vocab::LevelUp, @name, AEAJobModCore::JobLevel, @job_level))
+    new_skills.each do |skill|
+      $game_message.add(sprintf(Vocab::ObtainSkill, skill.name))
+    end
+  end
+
+  def gain_job_exp(job_exp)
+    job_exp *= AEAJobModCore.GetJobExpGain(job_exp)
+    change_job_exp(self.job_exp + (job_exp * final_job_exp_rate).to_i, true)
+  end
+
+  def final_job_exp_rate
+    exr * (battle_member? ? 1 : reserve_members_job_exp_rate)
+  end
+  
+  def reserve_members_job_exp_rate
+    $data_system.opt_extra_exp ? 1 : 0
+  end
+
+  def change_job_level(job_level, show)
+    job_level = [[job_level, max_job_level].min, 1].max
+    change_job_exp(exp_for_job_level(job_level), show)
+  end
+  
+  alias aeajl_feature_objects feature_objects
+  def feature_objects
+    aeajl_feature_objects + [$data_classes[AEAJobModCore::LevelId]]
+  end
+end
+
+#---------------------------------------------------------------------------
+#--------------------------- FIM DO SCRIPT ---------------------------------
+#---------------------------------------------------------------------------
+
+#---------------------------------------------------------------------------
+#------------------------ Exibição em Menu (RTP) ---------------------------
+#---------------------------------------------------------------------------
+class Window_Base < Window
+  
+  def draw_actor_job_level(actor, x, y)
+    change_color(system_color)
+    draw_text(x, y, 32, line_height, AEAJobModCore::JobLevelShort)
+    change_color(normal_color)
+    draw_text(x + 32, y, 24, line_height, actor.job_level, 2)
+  end
+                    
+  alias originaldss draw_actor_simple_status
+  def draw_actor_simple_status(actor, x, y)
+    draw_actor_job_level(actor, x, y + line_height * 2)
+    originaldss(actor, x, y)
+  end
+end
+
+class Window_Status < Window_Selectable
+  
+  def draw_block2(y)
+    draw_actor_face(@actor, 8, y)
+    draw_basic_info(136, y)
+    draw_exp_info(284, y)
+    draw_job_exp_info(444, y)
+  end
+  
+  def draw_exp_info(x, y)
+    s1 = @actor.max_level? ? "-------" : @actor.exp - @actor.current_level_exp
+    s2 = @actor.max_level? ? "-------" : @actor.next_level_exp - @actor.exp
+    s_next = sprintf(Vocab::ExpNext, Vocab::level)
+    change_color(system_color)
+    draw_text(x, y + line_height * 0, 150, line_height, Vocab::ExpTotal)
+    draw_text(x, y + line_height * 2, 150, line_height, s_next)
+    change_color(normal_color)
+    draw_text(x, y + line_height * 1, 150, line_height, s1, 2)
+    draw_text(x, y + line_height * 3, 150, line_height, s2, 2)
+  end
+  
+  alias originaldbi draw_basic_info
+  def draw_basic_info(x, y)
+    originaldbi(x, y)
+    draw_actor_job_level(@actor, x, y + line_height * 1)
+  end
+  
+  def draw_job_exp_info(x, y)
+    s1 = @actor.max_job_level? ? "-------" : @actor.job_exp - @actor.current_level_job_exp
+    s2 = @actor.max_job_level? ? "-------" : @actor.next_level_job_exp - @actor.job_exp
+    s_next = sprintf(AEAJobModCore::JobExpNext, AEAJobModCore::JobLevel)
+    change_color(system_color)
+    draw_text(x, y + line_height * 0, 170, line_height, AEAJobModCore::JobExpTotal)
+    draw_text(x, y + line_height * 2, 170, line_height, s_next)
+    change_color(normal_color)
+    draw_text(x, y + line_height * 1, 170, line_height, s1, 2)
+    draw_text(x, y + line_height * 3, 170, line_height, s2, 2)
+  end
+end
+#---------------------------------------------------------------------------
+#--------------------- Fim da Exibição em Menu (RTP) -----------------------
+#---------------------------------------------------------------------------

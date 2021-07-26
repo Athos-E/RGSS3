@@ -182,6 +182,8 @@ class RPG::BaseItem
   attr_reader :wis
   attr_reader :dex
   attr_reader :luk
+  attr_reader :hdef
+  attr_reader :hmdf
   
   def load_rangednotetag
     @ranged = false
@@ -194,10 +196,10 @@ class RPG::BaseItem
   end
   
   def load_attributenotetag
-    @str = @agi = @con = @int = @wis = @dex = @luk = 0
     return if self.is_a?(RPG::EquipItem)
     return if self.is_a?(RPG::UsableItem)
-    
+    @str = @agi = @con = @int = @wis = @dex = @luk = 0
+    @hdef = @hmdf = 0.0
     self.note.split(/[\r\n]+/).each { |line|
     case line
       when /<(?:STR|str|Str):[ ](\d+)>/i
@@ -214,6 +216,10 @@ class RPG::BaseItem
         @dex = $1.to_i
       when /<(?:LUK|luk|Luk):[ ](\d+)>/i
         @luk = $1.to_i
+      when /<(?:HDEF|hdef|Hdef):[ ](\d+)>/i
+        @hdef = $1.to_f / 100
+      when /<(?:HMDF|hmdf|Hmdf):[ ](\d+)>/i
+        @hmdf = $1.to_f / 100
       end
     }
   end
@@ -228,8 +234,6 @@ class RPG::EquipItem < RPG::BaseItem
   attr_reader :wisplus
   attr_reader :dexplus
   attr_reader :lukplus
-  attr_reader :hdef
-  attr_reader :hmdf
   
   def load_attributenotetag
     @strplus = @agiplus = @conplus = @intplus = @wisplus = @dexplus = @lukplus = 0
@@ -257,7 +261,19 @@ class RPG::EquipItem < RPG::BaseItem
       end
     }
   end
-end  
+end
+
+#--------------------------------------------------------------------------
+# * BattleManager
+#--------------------------------------------------------------------------
+
+module BattleManager
+  class << self    
+    def make_escape_ratio
+      @escape_ratio = 1.5 - 1.0 * $game_troop.hit / $game_party.eva
+    end
+  end
+end
 
 #--------------------------------------------------------------------------
 # * Game_BattlerBase
@@ -265,6 +281,8 @@ end
 
 class Game_BattlerBase
   
+  alias useless1 agi
+  alias useless2 luk
   def str; param(101); end
   def agi; param(102); end
   def con; param(103); end
@@ -272,11 +290,9 @@ class Game_BattlerBase
   def wis; param(105); end
   def dex; param(106); end
   def luk; param(107); end
-  def useless1; param(6); end
-  def useless2; param(7); end
   def hdef; xparam(50); end
   def hmdf; xparam(51); end
-  
+    
   alias aearpgattr_init initialize
   def initialize
     @str = @agi = @con = @int = @wis = @dex = @luk = 1
@@ -515,10 +531,12 @@ class Game_Actor < Game_Battler
     case param_id
       when 50
         for equip in equips
+          next if equip.nil?
           value += equip.hdef
         end
       when 51
         for equip in equips
+          next if equip.nil?
           value += equip.hmdf
         end
     end
@@ -587,8 +605,8 @@ class Game_Enemy < Game_Battler
   end
   
   alias aearpgattr_einit initialize
-  def initialize
-    aearpgattr_einit
+  def initialize(index, enemy_id)
+    aearpgattr_einit(index, enemy_id)
     @str = enemy.str if enemy.str != 0
     @agi = enemy.agi if enemy.agi != 0
     @con = enemy.con if enemy.con != 0
@@ -597,6 +615,13 @@ class Game_Enemy < Game_Battler
     @dex = enemy.dex if enemy.dex != 0
     @luk = enemy.luk if enemy.luk != 0
   end
+  
+  alias aearpgattr_eparam_base param_base
+  def param_base(param_id)
+    value = aearpgattr_eparam_base(param_id) || 0
+    value += super(param_id)
+    return value
+  end
 end
 
 #--------------------------------------------------------------------------
@@ -604,7 +629,6 @@ end
 #--------------------------------------------------------------------------
 
 class Game_Unit
-  
   def eva
     return 1 if members.size == 0
     members.inject(0) {|r, member| r += member.eva } / members.size
@@ -614,15 +638,13 @@ class Game_Unit
     return 1 if members.size == 0
     members.inject(0) {|r, member| r += member.hit } / members.size
   end
-  
 end
 
 #--------------------------------------------------------------------------
 # * Game_Party
 #--------------------------------------------------------------------------
 
-class Game_Party < Game_Unit
-
+class Game_Party < Game_Unit  
   def rate_preemptive(troop_eva)
     (hit >= troop_eva ? 0.05 : 0.03) * (raise_preemptive? ? 4 : 1)
   end

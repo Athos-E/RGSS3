@@ -8,7 +8,6 @@ Função: Fazer com que os itens do jogo sejam capazes de possuir atributos
 individuais e alteráveis
 ----------------------------------------------------------------------------
 =end
-
 module AEA_IWD
   def self.item_with_data?(item)
     defined?(item.index) and item.index != nil
@@ -154,6 +153,7 @@ class Game_BaseItem
       new_item = $game_items.create_weapon(item.id) if is_weapon?
       new_item = $game_items.create_armor(item.id) if is_armor?
       new_item = $game_items.create_item(item.id) if is_item?
+      new_item = $data_skills[@item_id] if is_skill?
       return unless new_item
       @object = new_item
     end
