@@ -1,0 +1,192 @@
+
+=begin
+----------------------------------------------------------------------------
+--------------------------------- INFO -------------------------------------
+----------------------------------------------------------------------------
+Criador: Akaiger, créditos: Equipe RMVX ACE
+Nome: Athos' Item Weight
+Função: Dar peso a itens, fazendo com que o inventário seja limitado
+Requer Athos' Item With Data (Core)
+----------------------------------------------------------------------------
+
+ O peso máximo é calculado a partir do herói que estiver em primeiro lugar no
+grupo, e o peso atual é calculado incluindo os equipamentos desse herói, mas
+ignorando os outros. O peso de cada item, arma ou armadura é decidido por 
+notetag no banco de dados.
+ Usando o menu RTP, o peso é exibido na janela onde mostra o ouro/dinheiro
+do grupo, abaixo do dinheiro.
+
+-------------------------SCRIPT CALLS-------------------------
+
+$game_party.weight
+
+Exibe o valor atual de peso que o grupo está carregando.
+
+----------------------------
+$game_party.max_weight
+
+Exibe o valor do peso máximo do grupo.
+
+----------------------------
+$game_party.max_weight = x
+
+x = valor de peso máximo
+Altera o valor base de peso máximo ( sem o adicional de STR/ATK )
+
+----------------------------
+$game_party.max_weight = AEA_W::BASE_MAX_WEIGHT
+
+Reseta o valor de peso máximo base.
+
+----------------------------
+
+-----NOTETAG-----
+
+ <weight: x> 
+ <WEIGHT: 1.0> 
+ <Weight: 0.1>
+ 
+-----------------
+x = peso
+
+Qualquer valor de peso precisa colocar o valor inteiro, com decimal incluído. 
+Separe os decimais com ponto ao invés de vírgula, como acima.
+
+=end
+module AEA_W
+#----------------------------------------------------------------------------
+#----------------------------- CONFIGURAÇÃO ---------------------------------
+#----------------------------------------------------------------------------
+  #Como o peso vai ser chamado no jogo
+  VOCAB = "Peso"
+  
+  #Peso máximo inicial
+  BASE_MAX_WEIGHT = 50.0
+  
+  #Peso máximo por ponto de STR (Requer Athos' RPG Attributes)
+  STR_SCALE = 3.0
+  
+  #Peso máximo por ATK
+  ATK_SCALE = 0.0
+#---------------------------------------------------------------------------
+#--------------------------- FIM DA CONFIGURAÇÃO ---------------------------
+#---------------------------------------------------------------------------
+end
+#---------------------------------------------------------------------------
+#--------------------------------- SCRIPT ----------------------------------
+#--------------------------------------------------------------------------- 
+module DataManager
+  class << self
+    alias aeaw_load_database load_database
+    def load_database
+      aeaw_load_database
+      load_weight_notetag
+    end
+    
+    def load_weight_notetag
+      groups = [$data_items, $data_weapons, $data_armors]
+      for group in groups
+        for obj in group
+          next if obj.nil?
+          obj.load_weight_notetag
+        end
+      end
+    end
+  end
+end
+
+class Game_ItemBase
+  attr_accessor :weight
+  
+  alias aeaw_init initialize
+  def initialize(id, index = 0)
+    aeaw_init(id, index)
+    @weight = data.weight
+  end
+end
+
+class RPG::BaseItem
+  attr_accessor :weight
+
+  def load_weight_notetag
+    @weight = 0.0
+    self.note.split(/[\r\n]+/).each { |line|
+      case line
+        when /<(?:Weight|weight|WEIGHT):[ ](\d+)>/i
+          @weight = $1.to_f
+      end
+    }
+  end
+end
+
+class Game_Party
+  attr_writer :max_weight
+  
+  alias aeaw_init initialize
+  def initialize
+    aeaw_init
+    @max_weight = AEA_W::BASE_MAX_WEIGHT
+  end
+  
+  def max_weight
+    if defined?(members[0].str) and members[0].str != nil
+      @max_weight + (members[0].str * AEA_W::STR_SCALE) + (members[0].atk * AEA_W::ATK_SCALE)
+    else
+      @max_weight + (members[0].atk * AEA_W::ATK_SCALE)
+    end
+  end
+  
+  def weight
+    @weight = 0.0
+    all_items.each do |i|
+      @weight += i.weight * item_number(i)
+    end
+    members[0].equips.each do |i|
+      next if i.nil?
+      @weight += i.weight
+    end
+    return @weight
+  end
+  
+  alias aeaw_gain_item gain_item
+  def gain_item(item, amount, include_equip = false)
+    return if item.nil?
+    value = amount
+    if value > 0
+      items_weight = item.weight * value
+      new_weight = weight + items_weight
+      while new_weight > max_weight do
+        break if value <= 0
+        value -= 1
+        new_weight = item.weight * value
+      end
+      return if new_weight > max_weight
+    end
+    aeaw_gain_item(item, value, include_equip)
+  end
+end
+
+class Window_Gold < Window_Base
+  def initialize
+    super(0, 0, window_width, fitting_height(2))
+    refresh
+  end
+
+  alias aeaw_refresh refresh
+  def refresh
+    aeaw_refresh
+    change_color(normal_color)
+    draw_text(4, y + 20, (contents.width - 8) - text_size(AEA_W::VOCAB).width - 2, line_height, "#{$game_party.weight} / #{$game_party.max_weight}", 2)
+    change_color(system_color)
+    draw_text(4, y + 20 , contents.width - 8, line_height, AEA_W::VOCAB, 2)
+  end
+end
+
+class Game_Actor < Game_Battler
+  def trade_item_with_party(new_item, old_item)
+    return false if new_item && !$game_party.has_item?(new_item)
+    $game_party.lose_item(new_item, 1)
+    $game_party.gain_item(old_item, 1)
+    return true
+  end
+end
